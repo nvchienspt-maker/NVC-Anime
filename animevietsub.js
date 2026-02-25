@@ -6,7 +6,7 @@ function getManifest() {
     return JSON.stringify({
         "id": "animevietsub",
         "name": "AnimeVietsub",
-        "version": "1.0.0",
+        "version": "1.0.2",
         "baseUrl": "https://animevietsub.be",
         "iconUrl": "https://animevietsub.be/favicon.ico",
         "isEnabled": true,
@@ -171,42 +171,43 @@ function parseSearchResponse(html) {
 
 function parseMovieDetail(html) {
     try {
-        // Bắt Tiêu đề chính
         var titleMatch = html.match(/<h1[^>]*class="[^"]*Title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i) || 
                          html.match(/<title>([\s\S]*?)<\/title>/i);
         var title = titleMatch ? PluginUtils.cleanText(titleMatch[1]) : "Chi tiết Anime";
 
-        // Bắt Ảnh Poster
-        var posterMatch = html.match(/<div[^>]*class="[^"]*Image[^"]*"[^>]*>\s*<img[^>]*src="([^"]+)"/i);
+        var posterMatch = html.match(/<div[^>]*class="[^"]*Image[^"]*"[^>]*>\s*<img[^>]*src="([^"]+)"/i) ||
+                          html.match(/<img[^>]*itemprop="image"[^>]*src="([^"]+)"/i);
         var posterUrl = posterMatch ? posterMatch[1] : "";
 
-        // Bắt Nội dung phim
-        var descMatch = html.match(/<div[^>]*class="[^"]*Description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        var descMatch = html.match(/<div[^>]*class="[^"]*Description[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                        html.match(/<div[^>]*itemprop="description"[^>]*>([\s\S]*?)<\/div>/i);
         var description = descMatch ? PluginUtils.cleanText(descMatch[1]) : "";
 
-        // Lấy link trang xem phim (nút Xem Phim) để cào danh sách tập
-        var watchUrlMatch = html.match(/<a[^>]*href="([^"]+)"[^>]*class="[^"]*btn-see[^"]*"[^>]*>/i) ||
-                            html.match(/<a[^>]*href="([^"]+)"[^>]*>Xem Phim<\/a>/i);
+        // Bắt chính xác nút Xem Phim (Hỗ trợ cả link tương đối và tuyệt đối)
+        var watchUrlMatch = html.match(/<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*(btn-see|btn-danger|play)[^"']*["']/i) ||
+                            html.match(/<a[^>]*href=["']([^"']+)["'][^>]*>Xem Phim<\/a>/i);
         var watchUrl = watchUrlMatch ? watchUrlMatch[1] : "";
 
         var servers = [];
         var episodes = [];
 
-        // --- NẾU ĐÂY LÀ TRANG XEM PHIM (Có danh sách tập) ---
         var epBlockRegex = /<ul[^>]*class="[^"]*list-episode[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
         var epBlockMatch = epBlockRegex.exec(html);
 
         if (epBlockMatch) {
             var epListHtml = epBlockMatch[1];
-            var epItemRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+            var epItemRegex = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
             var epItem;
 
             while ((epItem = epItemRegex.exec(epListHtml)) !== null) {
                 var epLink = epItem[1];
                 var epName = PluginUtils.cleanText(epItem[2]);
                 
-                // Trích xuất ID tập phim để lấy luồng
-                var epId = epLink.replace("https://animevietsub.be/", "").replace(/^\//, "");
+                // Bỏ qua các link ảo chặn thao tác
+                if (epLink === "#" || epLink.indexOf("javascript") !== -1) continue;
+
+                // Tách ID chuẩn xác (Xóa domain nếu có, và xóa dấu / ở đầu)
+                var epId = epLink.replace(/^(https?:\/\/[^\/]+)?\//i, "");
 
                 episodes.push({
                     id: epId,
@@ -222,18 +223,18 @@ function parseMovieDetail(html) {
                 });
             }
         } 
-        // --- NẾU LÀ TRANG THÔNG TIN (Chưa có danh sách tập, cần trigger logic load tập) ---
         else if (watchUrl) {
-            // Đối với kiến trúc app, ta truyền ID của trang xem phim vào thay vì trang chi tiết
-            // để lần gọi parseDetailResponse tiếp theo lấy được luồng hoặc danh sách tập.
-            servers.push({
-                name: "Server 1",
-                episodes: [{
-                    id: watchUrl.replace("https://animevietsub.be/", "").replace(/^\//, ""),
-                    name: "Phát Phim",
-                    slug: "play"
-                }]
-            });
+            var watchId = watchUrl.replace(/^(https?:\/\/[^\/]+)?\//i, "");
+            if (watchId) {
+                servers.push({
+                    name: "Server 1",
+                    episodes: [{
+                        id: watchId,
+                        name: "Phát Phim",
+                        slug: "play"
+                    }]
+                });
+            }
         }
 
         return JSON.stringify({
@@ -251,50 +252,40 @@ function parseMovieDetail(html) {
         return "null";
     }
 }
-
 function parseDetailResponse(html) {
     try {
         var streamUrl = "";
 
-        // 1. Quét biến javascript chứa link m3u8 hoặc luồng play (Rất hay dùng ở AnimeVietsub)
-        var scriptMatch = html.match(/(?:link_play|play_url|file)\s*[:=]\s*["']([^"']+)["']/i);
-        if (scriptMatch) {
-            streamUrl = scriptMatch[1];
-        }
-
-        // 2. Quét link trong các thẻ data-attribute của server phát (data-play, data-href, data-src)
-        if (!streamUrl) {
-            // Nhiều player giấu link iframe/m3u8 vào data-href thay vì src
-            var dataMatch = html.match(/data-(?:play|href|src)=["']([^"']+(?:\.m3u8|\/embed\/)[^"']*)["']/i);
-            if (dataMatch) {
-                streamUrl = dataMatch[1];
-            }
-        }
-
-        // 3. Quét iframe bọc luồng player (Xử lý chặt chẽ cả dấu nháy đơn, nháy kép)
-        if (!streamUrl) {
-            var iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
-            if (iframeMatch) {
-                var src = iframeMatch[1];
-                // Lọc bỏ các iframe rác như youtube, facebook, ads...
-                if (src.indexOf("youtube") === -1 && src.indexOf("facebook") === -1 && src.indexOf("google") === -1) {
-                    streamUrl = src;
+        // 1. Quét tìm toàn bộ thẻ iframe, ưu tiên iframe của player (tránh bị kẹt ở quảng cáo)
+        var iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/gi);
+        if (iframeMatch) {
+            for (var i = 0; i < iframeMatch.length; i++) {
+                var srcMatch = iframeMatch[i].match(/src=["']([^"']+)["']/i);
+                if (srcMatch) {
+                    var src = srcMatch[1];
+                    // Lọc bỏ iframe không phải video
+                    if (src.indexOf("youtube") === -1 && src.indexOf("facebook") === -1 && src.indexOf("google") === -1 && src.indexOf("twitter") === -1) {
+                        streamUrl = src;
+                        break;
+                    }
                 }
             }
         }
 
-        // 4. Quét m3u8 quét cạn (ét cạn toàn bộ DOM, đề phòng link bị bọc trong JSON nội bộ)
+        // 2. Nếu iframe bị ẩn, quét link m3u8 hoặc mp4 đóng gói trong script/data
         if (!streamUrl) {
-            var m3u8Match = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.m3u8[^"'\s<>\[\]]*)/i);
-            if (m3u8Match) {
-                streamUrl = m3u8Match[1];
+            var scriptMatch = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/i);
+            if (scriptMatch) {
+                streamUrl = scriptMatch[1].replace(/\\/g, "");
             }
         }
 
         if (streamUrl) {
-            // Chuẩn hóa link: Loại bỏ ký tự escape gạch chéo ngược (thường gặp nếu link bị trả về trong chuỗi JSON)
-            streamUrl = streamUrl.replace(/\\/g, "");
-            
+            // Chuẩn hóa link (Nếu iframe dạng //player.domain.com/...)
+            if (streamUrl.indexOf("//") === 0) {
+                streamUrl = "https:" + streamUrl;
+            }
+
             return JSON.stringify({
                 url: streamUrl,
                 headers: {
