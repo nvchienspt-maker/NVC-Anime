@@ -256,35 +256,45 @@ function parseDetailResponse(html) {
     try {
         var streamUrl = "";
 
-        // AnimeVietsub thường chứa link phim trong các thẻ iframe hoặc script biến cấu hình
-        
-        // Cấp độ 1: Bóc link m3u8 lộ trực tiếp trong mã nguồn / script
-        var m3u8Match = html.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/i);
-        if (m3u8Match) {
-            streamUrl = m3u8Match[1];
+        // 1. Quét biến javascript chứa link m3u8 hoặc luồng play (Rất hay dùng ở AnimeVietsub)
+        var scriptMatch = html.match(/(?:link_play|play_url|file)\s*[:=]\s*["']([^"']+)["']/i);
+        if (scriptMatch) {
+            streamUrl = scriptMatch[1];
         }
 
-        // Cấp độ 2: Bóc link từ player iframe (thường là các server dự phòng)
+        // 2. Quét link trong các thẻ data-attribute của server phát (data-play, data-href, data-src)
         if (!streamUrl) {
-            var iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
+            // Nhiều player giấu link iframe/m3u8 vào data-href thay vì src
+            var dataMatch = html.match(/data-(?:play|href|src)=["']([^"']+(?:\.m3u8|\/embed\/)[^"']*)["']/i);
+            if (dataMatch) {
+                streamUrl = dataMatch[1];
+            }
+        }
+
+        // 3. Quét iframe bọc luồng player (Xử lý chặt chẽ cả dấu nháy đơn, nháy kép)
+        if (!streamUrl) {
+            var iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
             if (iframeMatch) {
                 var src = iframeMatch[1];
-                if (src.indexOf("youtube") === -1 && src.indexOf("facebook") === -1) {
+                // Lọc bỏ các iframe rác như youtube, facebook, ads...
+                if (src.indexOf("youtube") === -1 && src.indexOf("facebook") === -1 && src.indexOf("google") === -1) {
                     streamUrl = src;
                 }
             }
         }
 
-        // Cấp độ 3: Bóc từ biến JSON hoặc API nội bộ của trang xem phim
+        // 4. Quét m3u8 quét cạn (ét cạn toàn bộ DOM, đề phòng link bị bọc trong JSON nội bộ)
         if (!streamUrl) {
-            var sourceMatch = html.match(/sources:\s*\[\s*{\s*file:\s*["']([^"']+)["']/i) ||
-                              html.match(/link_play\s*=\s*["']([^"']+)["']/i);
-            if (sourceMatch) {
-                streamUrl = sourceMatch[1];
+            var m3u8Match = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.m3u8[^"'\s<>\[\]]*)/i);
+            if (m3u8Match) {
+                streamUrl = m3u8Match[1];
             }
         }
 
         if (streamUrl) {
+            // Chuẩn hóa link: Loại bỏ ký tự escape gạch chéo ngược (thường gặp nếu link bị trả về trong chuỗi JSON)
+            streamUrl = streamUrl.replace(/\\/g, "");
+            
             return JSON.stringify({
                 url: streamUrl,
                 headers: {
