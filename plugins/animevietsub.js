@@ -176,7 +176,7 @@ function parseMovieDetail(html) {
     });
 }
 
-// ================= STREAM RESOLVER =================
+// ================= STREAM ENGINE =================
 
 function parseDetailResponse(html) {
 
@@ -228,17 +228,48 @@ function parseDetailResponse(html) {
         }
     }
 
-    // 6️⃣ Nếu chưa có video → follow iframe
-    let iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
+    // 🔥 ĐÃ SỬA: Tìm link lồng trong các biến Javascript (trường hợp web dùng JS để render iframe)
+    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|link)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
+    while ((m = jsRegex.exec(html)) !== null) {
+        let jsUrl = normalizeUrl(m[1]);
+        if (!jsUrl.match(/facebook\.com|youtube\.com|google\.com|recaptcha|twitter|ads|doubleclick/i)) {
+            return JSON.stringify({
+                url: jsUrl,
+                headers: headers,
+                subtitles: []
+            });
+        }
+    }
+
+    // 6️⃣ Nếu chưa có video → bắt iframe để Flutter follow
+    let iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
     while ((m = iframeRegex.exec(html)) !== null) {
 
         let iframeUrl = normalizeUrl(m[1]);
+
+        // 🔥 ĐÃ SỬA: Bỏ qua các iframe rác (tránh lỗi Flutter bắt nhầm nút Like Facebook hoặc quảng cáo)
+        if (iframeUrl.match(/facebook\.com|youtube\.com|google\.com|recaptcha|twitter|ads|doubleclick/i)) {
+            continue;
+        }
 
         return JSON.stringify({
             url: iframeUrl,
             headers: headers,
             subtitles: []
         });
+    }
+
+    // 🔥 ĐÃ SỬA: Bắt trường hợp link player giấu trong thuộc tính data-* của thẻ div (Lazy load custom)
+    let embedRegex = /data-(?:href|url|src|embed)=["'](https?:\/\/[^"']+)["']/gi;
+    while ((m = embedRegex.exec(html)) !== null) {
+        let embedUrl = normalizeUrl(m[1]);
+        if (embedUrl.includes("player") || embedUrl.includes("embed") || embedUrl.includes("animevietsub") || embedUrl.includes("play")) {
+            return JSON.stringify({
+                url: embedUrl,
+                headers: headers,
+                subtitles: []
+            });
+        }
     }
 
     return "{}";
