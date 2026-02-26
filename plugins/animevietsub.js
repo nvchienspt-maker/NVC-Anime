@@ -120,12 +120,38 @@ function parseListResponse(html) {
         var thumbMatch = innerHtml.match(/<img[^>]*src="([^"]+)"/i) || innerHtml.match(/data-src="([^"]+)"/i);
         var thumb = thumbMatch ? thumbMatch[1] : "";
 
-        var titleMatch = innerHtml.match(/title="([^"]+)"/i) || innerHtml.match(/<div[^>]*class="[^"]*Title[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-        var title = titleMatch ? PluginUtils.cleanText(titleMatch[1] || titleMatch[2]) : "Anime";
+       // ==========================================
+        // SỬA LỖI BẮT NHẦM TÊN PHIM (RATING)
+        // ==========================================
+        // Ưu tiên 1: Lấy tên ở thẻ div hoặc h (class name/Title)
+        var titleMatch = innerHtml.match(/<div[^>]*class="[^"]*(?:name|Title|title)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        if (!titleMatch) {
+            titleMatch = innerHtml.match(/<h[1-6][^>]*class="[^"]*(?:name|Title|title)[^"]*"[^>]*>([\s\S]*?)<\/h[1-6]>/i);
+        }
+        // Ưu tiên 2: Lấy tên ở thuộc tính alt của ảnh (rất chính xác, không dính rating)
+        if (!titleMatch) {
+            titleMatch = innerHtml.match(/alt="([^"]+)"/i);
+        }
+        
+        var title = titleMatch ? PluginUtils.cleanText(titleMatch[1]) : "Anime";
 
-        var epMatch = innerHtml.match(/<span[^>]*class="[^"]*ep-status[^"]*"[^>]*>([\s\S]*?)<\/span>/i) || 
-                      innerHtml.match(/<span[^>]*class="[^"]*tray-item[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+        // Chốt chặn an toàn: Nếu lỡ bắt nhầm đoạn "7.8 trong số 10", ép lấy thuộc tính alt của ảnh
+        if (title.indexOf("trong số") !== -1 || title.indexOf("dựa trên") !== -1) {
+            var altMatch = innerHtml.match(/alt="([^"]+)"/i);
+            if (altMatch) title = PluginUtils.cleanText(altMatch[1]);
+        }
+
+        // ==========================================
+        // SỬA LỖI BẮT SỐ TẬP (MỞ RỘNG CLASS)
+        // ==========================================
+        var epMatch = innerHtml.match(/<span[^>]*class="[^"]*(?:ep-status|tray-item|status|episode|label)[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+        if (!epMatch) {
+            epMatch = innerHtml.match(/<div[^>]*class="[^"]*(?:ep-status|tray-item|status|episode|label)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+        }
+        
         var episodeCurrent = epMatch ? PluginUtils.cleanText(epMatch[1]) : "Cập nhật";
+
+        // ... (phần đẩy vào mảng matches giữ nguyên) ...
 
         if (id && !foundIds[id] && title && title !== "Anime") {
             matches.push({
