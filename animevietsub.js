@@ -239,44 +239,59 @@ function parseDetailResponse(html) {
     try {
         var streamUrl = "";
 
-        // 1. Quét tìm thẻ iframe (Xử lý cả src và data-src)
-        var iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
-        var match;
-        while ((match = iframeRegex.exec(html)) !== null) {
-            var src = match[1];
-            // Bỏ qua iframe rác, nhưng cho phép youtube nếu đó là video duy nhất
-            if (src.indexOf("facebook") === -1 && src.indexOf("googletag") === -1) {
-                streamUrl = src;
-                break;
+        // Hàm kiểm tra an toàn: Tuyệt đối không cho phép file mã nguồn/hình ảnh chui lọt
+        function isValidLink(url) {
+            if (!url) return false;
+            var l = url.toLowerCase();
+            if (l.indexOf(".js") !== -1 && l.indexOf(".m3u8") === -1) return false;
+            if (l.indexOf(".css") !== -1) return false;
+            if (l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1) return false;
+            return true;
+        }
+
+        // 1. ƯU TIÊN SỐ 1: Quét quét trần mọi link video chuẩn (.m3u8, .mp4) trong toàn bộ mã HTML
+        var m3u8Match = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/i);
+        if (m3u8Match) {
+            streamUrl = m3u8Match[1].replace(/\\/g, "");
+        }
+
+        // 2. Nếu không tìm thấy m3u8 trực tiếp, quét thẻ iframe của player
+        if (!streamUrl) {
+            var iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
+            var match;
+            while ((match = iframeRegex.exec(html)) !== null) {
+                var src = match[1];
+                if (isValidLink(src) && src.indexOf("facebook") === -1 && src.indexOf("googletag") === -1) {
+                    streamUrl = src;
+                    break;
+                }
             }
         }
 
-        // 2. Nếu không có iframe, tìm trong data-play hoặc data-href của nút server
+        // 3. Tìm link embed nằm trong nút bấm Server (thường nằm ở data-play hoặc data-href)
         if (!streamUrl) {
-            var serverMatch = html.match(/data-(?:href|play|url)=["']([^"']+(?:player|embed|\.m3u8|youtube)[^"']*)["']/i);
-            if (serverMatch) {
+            var serverMatch = html.match(/data-(?:href|play|url)=["']([^"']+(?:player|embed|youtube)[^"']*)["']/i);
+            if (serverMatch && isValidLink(serverMatch[1])) {
                 streamUrl = serverMatch[1];
             }
         }
 
-        // 3. Quét link ẩn trong thẻ script (bị giấu bởi js)
+        // 4. Cứu cánh cuối cùng: Tìm trong các biến Javascript giấu link
         if (!streamUrl) {
-            var scriptMatch = html.match(/(?:link_play|play_url|file|src)\s*[:=]\s*["']([^"']+(?:\.m3u8|\.mp4|embed|player|youtube)[^"']*)["']/i);
-            if (scriptMatch) {
-                streamUrl = scriptMatch[1].replace(/\\/g, "");
+            var scriptRegex = /(?:link_play|play_url|file|src)\s*[:=]\s*["']([^"']+)["']/gi;
+            var sMatch;
+            while ((sMatch = scriptRegex.exec(html)) !== null) {
+                var link = sMatch[1].replace(/\\/g, "");
+                if (isValidLink(link) && (link.indexOf("player") !== -1 || link.indexOf("embed") !== -1)) {
+                    streamUrl = link;
+                    break;
+                }
             }
         }
 
-        // 4. Nếu vẫn rỗng, quét vét cạn mọi đuôi .m3u8 hoặc .mp4 trong source html
-        if (!streamUrl) {
-            var mediaMatch = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/i);
-            if (mediaMatch) {
-                streamUrl = mediaMatch[1].replace(/\\/g, "");
-            }
-        }
-
+        // Trả về kết quả sau khi chuẩn hóa
         if (streamUrl) {
-            // Sửa link tương đối thành tuyệt đối
+            // Fix lỗi link thiếu https://
             if (streamUrl.indexOf("//") === 0) {
                 streamUrl = "https:" + streamUrl;
             } else if (streamUrl.indexOf("/") === 0) {
