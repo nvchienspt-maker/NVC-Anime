@@ -124,63 +124,126 @@ function parseMovieDetail(html) {
         return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
     }
 
-    function normalizeUrl(u) {
-        return u.replace(/^(https?:\/\/[^\/]+)?\//i, "");
-    }
-
-    // ===== TITLE =====
     var titleMatch =
         html.match(/<h1[^>]*>(.*?)<\/h1>/i) ||
         html.match(/<title>(.*?)<\/title>/i);
 
     var title = titleMatch ? clean(titleMatch[1]) : "Anime";
 
-    // ===== POSTER =====
     var posterMatch =
         html.match(/property="og:image" content="([^"]+)"/i);
 
     var poster = posterMatch ? posterMatch[1] : "";
 
-    // ===== EPISODES =====
-    var episodeMap = {};
+    // 🔥 BẮT MOVIE ID
+    var idMatch =
+        html.match(/data-id=["']?(\d+)["']?/i) ||
+        html.match(/movie_id\s*=\s*["']?(\d+)/i) ||
+        html.match(/"film_id"\s*:\s*"(\d+)"/i);
 
-    var epRegex =
-        /href=["']([^"']*\/phim\/[^"']*\/tap-(\d+)[^"']*\.html)["']/gi;
-
-    var m;
-
-    while ((m = epRegex.exec(html)) !== null) {
-
-        var fullUrl = m[1];
-        var epNumber = parseInt(m[2]);
-
-        if (!epNumber) continue;
-
-        episodeMap[epNumber] = {
-            id: normalizeUrl(fullUrl),
-            name: "Tập " + epNumber,
-            slug: fullUrl
-        };
+    if (!idMatch) {
+        return JSON.stringify({
+            title: title,
+            posterUrl: poster,
+            backdropUrl: poster,
+            description: "",
+            servers: []
+        });
     }
 
-    // ===== SORT =====
-    var episodeNumbers = Object.keys(episodeMap)
-        .map(n => parseInt(n))
-        .sort((a, b) => a - b);
-
-    var episodes = episodeNumbers.map(n => episodeMap[n]);
+    var movieId = idMatch[1];
 
     return JSON.stringify({
         title: title,
         posterUrl: poster,
         backdropUrl: poster,
         description: "",
-        servers: [
-            {
-                name: "Full Server",
+        ajaxEpisodeUrl: BASE_URL + "/ajax/episode/list/" + movieId,
+        servers: []
+    });
+}
+
+//=================parseAjaxEpisode (FULL DANH SÁCH TẬP)==========
+
+function parseAjaxEpisode(html) {
+
+    function clean(t) {
+        return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
+    }
+
+    function normalizeUrl(u) {
+        return u.replace(/^(https?:\/\/[^\/]+)?\//i, "");
+    }
+
+    var servers = [];
+    var serverIndex = 1;
+
+    // AJAX trả HTML có dạng:
+    // <div class="server"> ... <a href="...">1</a>
+
+    var serverRegex =
+        /<div[^>]*class="[^"]*server[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>?/gi;
+
+    var serverMatch;
+
+    while ((serverMatch = serverRegex.exec(html)) !== null) {
+
+        var block = serverMatch[1];
+        var episodes = [];
+
+        var epRegex =
+            /href=["']([^"']*tap-(\d+)[^"']*\.html)["'][^>]*>(.*?)<\/a>/gi;
+
+        var epMatch;
+
+        while ((epMatch = epRegex.exec(block)) !== null) {
+
+            var fullUrl = epMatch[1];
+            var epNumber = epMatch[2];
+
+            episodes.push({
+                id: normalizeUrl(fullUrl),
+                name: "Tập " + epNumber,
+                slug: fullUrl
+            });
+        }
+
+        if (episodes.length > 0) {
+            servers.push({
+                name: "Server " + serverIndex,
                 episodes: episodes
-            }
-        ]
+            });
+            serverIndex++;
+        }
+    }
+
+    // 🔥 Nếu site không chia server, gom tất cả
+    if (servers.length === 0) {
+
+        var allEpisodes = [];
+        var fallbackRegex =
+            /href=["']([^"']*tap-(\d+)[^"']*\.html)["']/gi;
+
+        var m;
+
+        while ((m = fallbackRegex.exec(html)) !== null) {
+            allEpisodes.push({
+                id: normalizeUrl(m[1]),
+                name: "Tập " + m[2],
+                slug: m[1]
+            });
+        }
+
+        if (allEpisodes.length > 0) {
+            servers.push({
+                name: "Full Server",
+                episodes: allEpisodes
+            });
+        }
+    }
+
+    return JSON.stringify({
+        servers: servers
     });
 }
 
