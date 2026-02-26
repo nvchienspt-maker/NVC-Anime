@@ -32,8 +32,19 @@ function normalizeUrl(u) {
 
 function isVideo(u) {
     if (!u) return false;
+
     let l = u.toLowerCase();
-    return l.includes(".m3u8") || l.includes(".mp4");
+
+    if (l.endsWith(".js")) return false;
+    if (l.endsWith(".css")) return false;
+    if (l.includes("jquery")) return false;
+    if (l.includes("googleapis")) return false;
+
+    return (
+        l.includes(".m3u8") ||
+        l.includes(".mp4") ||
+        l.includes(".webm")
+    );
 }
 
 // ================= URL =================
@@ -113,12 +124,11 @@ function parseListResponse(html) {
         found[id] = true;
     }
 
+    if (!iframeUrl.endsWith(".js")) {
     return JSON.stringify({
-        items: items,
-        pagination: {
-            currentPage: 1,
-            totalPages: 50
-        }
+        url: iframeUrl,
+        headers: headers,
+        followIframe: true
     });
 }
 
@@ -255,7 +265,6 @@ function parseDetailResponse(html) {
     let candidates = [];
     let m;
 
-    // Hàm phụ trợ chuẩn hóa URL nội bộ
     function normUrl(u) {
         if (!u) return "";
         u = u.replace(/\\\//g, "/").replace(/&amp;/g, "&");
@@ -276,7 +285,8 @@ function parseDetailResponse(html) {
     }
 
     // 3️⃣ Bắt link cấu hình từ Javascript hoặc data-href của div ẩn
-    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|file|src|data-href|data-embed)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
+    // ĐÃ SỬA: Bỏ "src" đứng một mình để không bắt nhầm thẻ <script src="..."> hoặc <img src="...">
+    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|file|data-href|data-embed)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
     while ((m = jsRegex.exec(html)) !== null) {
         candidates.push(normUrl(m[1]));
     }
@@ -297,8 +307,11 @@ function parseDetailResponse(html) {
     for (let i = 0; i < candidates.length; i++) {
         let u = candidates[i];
         
-        // Cực kỳ quan trọng: Lọc sạch Iframe rác
-        if (!u.match(/facebook\.com|youtube\.com|google\.com|recaptcha|twitter|ads|doubleclick|googletagmanager/i)) {
+        // ĐÃ SỬA: Thêm bộ lọc chặn mọi loại file tĩnh (.js, .css, ảnh) và domain rác
+        let isJunkDomain = u.match(/facebook\.com|youtube\.com|google\.com|googleapis\.com|recaptcha|twitter|ads|doubleclick|googletagmanager|analytics/i);
+        let isJunkExtension = u.match(/\.(js|css|png|jpg|jpeg|gif|webp|svg|ico)(\?.*)?$/i);
+
+        if (!isJunkDomain && !isJunkExtension) {
             return JSON.stringify({
                 url: u,
                 headers: headers,
@@ -309,3 +322,4 @@ function parseDetailResponse(html) {
 
     return "{}";
 }
+
