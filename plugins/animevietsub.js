@@ -6,7 +6,7 @@ function getManifest() {
     return JSON.stringify({
         "id": "animevietsub",
         "name": "AnimeVietsub",
-        "version": "1.1.0",
+        "version": "1.1.1",
         "baseUrl": "https://animevietsub.be",
         "iconUrl": "https://animevietsub.be/favicon.ico",
         "isEnabled": true,
@@ -244,64 +244,79 @@ function parseDetailResponse(html) {
             "Origin": "https://animevietsub.be"
         };
 
+        var bestM3u8 = "";
+        var bestIframe = "";
+
+        // Hàm dọn dẹp các ký tự thừa
         var decodeUrl = function (u) {
             if (!u) return "";
-            if (u.indexOf("aHR0c") === 0) {
-                try { u = atob(u); } catch(e) {}
-            }
             return u.replace(/&amp;/g, "&").replace(/\\\/|\\\\/g, "/").replace(/\\\//g, "/");
         };
 
-        var isValid = function(l) {
-            if (!l || l.length < 10) return false;
-            l = l.toLowerCase();
+        // Hàm xử lý link: Đưa mọi link được tìm thấy qua màng lọc tuyệt đối
+        var processUrl = function(u) {
+            u = decodeUrl(u);
+            if (!u || u.length < 15) return;
+            var l = u.toLowerCase();
             
-            if (l.indexOf("http") !== 0 && l.indexOf("//") !== 0) return false;
-            if (l.indexOf("/phim/") !== -1 || l.indexOf(".html") !== -1 || l.indexOf("/danh-sach/") !== -1) return false;
-            if (l.indexOf(".js") !== -1 || l.indexOf(".css") !== -1 || l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1) return false;
+            // 1. Phải là một URL định dạng chuẩn
+            if (l.indexOf("http") !== 0 && l.indexOf("//") !== 0) return;
             
-            // TUYỆT ĐỐI CHẶN YOUTUBE (Trailer), và các trang mạng xã hội, quảng cáo
-            if (l.indexOf("youtube") !== -1 || l.indexOf("youtu.be") !== -1 || l.indexOf("jwplayer") !== -1 || l.indexOf("facebook") !== -1 || l.indexOf("googletag") !== -1) return false;
+            // 2. Chặn tuyệt đối rác (JS, CSS, Ảnh)
+            if (l.indexOf(".js") !== -1 && l.indexOf(".m3u8") === -1) return;
+            if (l.indexOf(".css") !== -1 || l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1 || l.indexOf(".gif") !== -1 || l.indexOf(".ico") !== -1) return;
+            
+            // 3. Chặn mạng xã hội và Trailer Youtube
+            if (l.indexOf("youtube") !== -1 || l.indexOf("youtu.be") !== -1 || l.indexOf("facebook") !== -1 || l.indexOf("googletag") !== -1) return;
+            
+            // 4. CHẶN VÒNG LẶP HTML: Bỏ qua các link trang web (ví dụ tap-01.html) nếu không chứa từ khóa của player
+            if (l.indexOf("animevietsub") !== -1) {
+                if (l.indexOf("/phim/") !== -1 || l.indexOf("/danh-sach/") !== -1 || l.indexOf("/tap-") !== -1) {
+                    return;
+                }
+                if (l.indexOf(".html") !== -1 && l.indexOf("player") === -1 && l.indexOf("v2") === -1) {
+                    return;
+                }
+            }
 
-            return true;
+            // Phân loại: Ưu tiên bắt m3u8 tuyệt đối, nếu không thì lấy iframe dự phòng
+            if (l.indexOf(".m3u8") !== -1) {
+                bestM3u8 = u;
+            } else if (!bestIframe && (l.indexOf("player") !== -1 || l.indexOf("embed") !== -1 || l.indexOf(".mp4") !== -1)) {
+                bestIframe = u;
+            }
         };
 
-        // 1. Quét iframe player
+        // KỊCH BẢN 1: Tóm chuỗi Base64 giấu trong thẻ data-hash hoặc script
+        var base64Regex = /aHR0c[a-zA-Z0-9\+\/\=]+/g;
+        var bMatch;
+        while ((bMatch = base64Regex.exec(html)) !== null) {
+            try { processUrl(atob(bMatch[0])); } catch(e) {}
+        }
+
+        // KỊCH BẢN 2: Quét thẻ iframe tường minh (hỗ trợ cả đường dẫn URL tương đối)
         var iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
-        var match;
-        while ((match = iframeRegex.exec(html)) !== null) {
-            var src = decodeUrl(match[1]);
-            if (isValid(src)) { 
-                streamUrl = src; 
-                break; 
+        var iMatch;
+        while ((iMatch = iframeRegex.exec(html)) !== null) {
+            var src = iMatch[1];
+            if (src.indexOf("/") === 0 && src.indexOf("//") !== 0) {
+                src = "https://animevietsub.be" + src;
             }
+            processUrl(src);
         }
 
-        // 2. Quét m3u8 / mp4 trần
-        if (!streamUrl) {
-            var mediaMatch = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/gi);
-            if (mediaMatch) {
-                for (var i = 0; i < mediaMatch.length; i++) {
-                    var mUrl = decodeUrl(mediaMatch[i]);
-                    if (isValid(mUrl)) { streamUrl = mUrl; break; }
-                }
-            }
+        // KỊCH BẢN 3: Quét vét cạn mọi URL nằm trần trong toàn bộ mã HTML (Phòng khi link bị tách đôi)
+        var urlRegex = /(?:https?:)?\/\/[a-zA-Z0-9\-\.\_\~\:\/\?\#\[\]\@\!\$\&\'\(\)\*\+\,\;\=\%]+/gi;
+        var uMatch;
+        while ((uMatch = urlRegex.exec(html)) !== null) {
+            processUrl(uMatch[0]);
         }
 
-        // 3. Quét các biến Script
-        if (!streamUrl) {
-            var scriptRegex = /(?:file|url|link_play|play_url)\s*[:=]\s*["']([^"']+)["']/gi;
-            var sMatch;
-            while ((sMatch = scriptRegex.exec(html)) !== null) {
-                var sUrl = decodeUrl(sMatch[1]);
-                if (isValid(sUrl) && (sUrl.indexOf("player") !== -1 || sUrl.indexOf("embed") !== -1 || sUrl.indexOf(".m3u8") !== -1 || sUrl.indexOf(".mp4") !== -1)) {
-                    streamUrl = sUrl;
-                    break;
-                }
-            }
-        }
+        // Ưu tiên m3u8. Nếu phim AnimeVietsub chỉ có iframe nhúng thì lấy iframe.
+        streamUrl = bestM3u8 || bestIframe;
 
         if (streamUrl) {
+            // Chuẩn hóa định dạng HTTPS
             if (streamUrl.indexOf("//") === 0) streamUrl = "https:" + streamUrl;
 
             return JSON.stringify({
