@@ -237,25 +237,53 @@ function parseMovieDetail(html) {
 
 function parseDetailResponse(html) {
     try {
-        var streamUrl = "";
+        if (!html) return "{}";
 
-        // Hàm kiểm tra an toàn: Tuyệt đối không cho phép file mã nguồn/hình ảnh chui lọt
-        function isValidLink(url) {
+        var streamUrl = "";
+        var headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://animevietsub.be/",
+            "Origin": "https://animevietsub.be"
+        };
+
+        // Hàm hỗ trợ từ hh3d: Dọn dẹp URL bị mã hóa
+        var decodeUrl = function (u) {
+            if (!u) return "";
+            return u.replace(/&amp;/g, "&")
+                .replace(/\\\/|\\\\/g, "/")
+                .replace(/\\\//g, "/");
+        };
+
+        // Hàm kiểm tra link an toàn (Chặn các file cấu hình như jwplayer.js)
+        var isValidLink = function(url) {
             if (!url) return false;
             var l = url.toLowerCase();
             if (l.indexOf(".js") !== -1 && l.indexOf(".m3u8") === -1) return false;
-            if (l.indexOf(".css") !== -1) return false;
-            if (l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1) return false;
+            if (l.indexOf(".css") !== -1 || l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1) return false;
+            if (l.indexOf("jwplayer") !== -1) return false;
             return true;
+        };
+
+        // 1. Quét JSON nội bộ (Nếu web trả về data ajax giống hh3d)
+        try {
+            var jsonMatch = html.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                var json = JSON.parse(jsonMatch[0]);
+                if (json.file && isValidLink(json.file)) streamUrl = json.file;
+                else if (json.url && isValidLink(json.url)) streamUrl = json.url;
+                else if (json.link && isValidLink(json.link)) streamUrl = json.link;
+            }
+        } catch(e) {}
+
+        // 2. Ưu tiên quét trần đuôi m3u8/mp4
+        if (!streamUrl) {
+            var mediaMatch = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/i);
+            if (mediaMatch && isValidLink(mediaMatch[1])) {
+                streamUrl = mediaMatch[1];
+            }
         }
 
-        // 1. ƯU TIÊN SỐ 1: Quét quét trần mọi link video chuẩn (.m3u8, .mp4) trong toàn bộ mã HTML
-        var m3u8Match = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/i);
-        if (m3u8Match) {
-            streamUrl = m3u8Match[1].replace(/\\/g, "");
-        }
-
-        // 2. Nếu không tìm thấy m3u8 trực tiếp, quét thẻ iframe của player
+        // 3. Quét iframe bọc luồng player
         if (!streamUrl) {
             var iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
             var match;
@@ -268,43 +296,28 @@ function parseDetailResponse(html) {
             }
         }
 
-        // 3. Tìm link embed nằm trong nút bấm Server (thường nằm ở data-play hoặc data-href)
+        // 4. Quét các thẻ data hoặc biến JS chứa link (thường áp dụng cho Server VIP/Dự phòng)
         if (!streamUrl) {
-            var serverMatch = html.match(/data-(?:href|play|url)=["']([^"']+(?:player|embed|youtube)[^"']*)["']/i);
-            if (serverMatch && isValidLink(serverMatch[1])) {
-                streamUrl = serverMatch[1];
-            }
-        }
-
-        // 4. Cứu cánh cuối cùng: Tìm trong các biến Javascript giấu link
-        if (!streamUrl) {
-            var scriptRegex = /(?:link_play|play_url|file|src)\s*[:=]\s*["']([^"']+)["']/gi;
-            var sMatch;
-            while ((sMatch = scriptRegex.exec(html)) !== null) {
-                var link = sMatch[1].replace(/\\/g, "");
-                if (isValidLink(link) && (link.indexOf("player") !== -1 || link.indexOf("embed") !== -1)) {
+            var varRegex = /(?:data-(?:href|play|url)|link_play|play_url|file|src)\s*[:=]\s*["']([^"']+)["']/gi;
+            var vMatch;
+            while ((vMatch = varRegex.exec(html)) !== null) {
+                var link = vMatch[1];
+                if (isValidLink(link) && (link.indexOf("player") !== -1 || link.indexOf("embed") !== -1 || link.indexOf("youtube") !== -1)) {
                     streamUrl = link;
                     break;
                 }
             }
         }
 
-        // Trả về kết quả sau khi chuẩn hóa
         if (streamUrl) {
-            // Fix lỗi link thiếu https://
-            if (streamUrl.indexOf("//") === 0) {
-                streamUrl = "https:" + streamUrl;
-            } else if (streamUrl.indexOf("/") === 0) {
-                streamUrl = "https://animevietsub.be" + streamUrl;
-            }
+            streamUrl = decodeUrl(streamUrl);
+            
+            if (streamUrl.indexOf("//") === 0) streamUrl = "https:" + streamUrl;
+            else if (streamUrl.indexOf("/") === 0) streamUrl = "https://animevietsub.be" + streamUrl;
 
             return JSON.stringify({
                 url: streamUrl,
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer": "https://animevietsub.be/",
-                    "Origin": "https://animevietsub.be"
-                },
+                headers: headers,
                 subtitles: []
             });
         }
