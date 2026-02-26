@@ -120,88 +120,67 @@ function parseListResponse(html) {
 
 function parseMovieDetail(html) {
 
-    let titleMatch =
+    function clean(t) {
+        return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
+    }
+
+    function normalizeUrl(u) {
+        return u.replace(/^(https?:\/\/[^\/]+)?\//i, "");
+    }
+
+    // ===== TITLE =====
+    var titleMatch =
         html.match(/<h1[^>]*>(.*?)<\/h1>/i) ||
         html.match(/<title>(.*?)<\/title>/i);
 
-    let title = titleMatch ? clean(titleMatch[1]) : "Anime";
+    var title = titleMatch ? clean(titleMatch[1]) : "Anime";
 
-    let posterMatch =
+    // ===== POSTER =====
+    var posterMatch =
         html.match(/property="og:image" content="([^"]+)"/i);
 
-    let poster = posterMatch ? posterMatch[1] : "";
+    var poster = posterMatch ? posterMatch[1] : "";
 
-    let servers = [];
-    let serverIndex = 1;
+    // ===== EPISODES =====
+    var episodeMap = {};
 
-    // Bắt nhiều dạng server
-    let serverRegex =
-        /<div[^>]*class="[^"]*(?:server|Server|episode-list|list-server)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>?/gi;
+    var epRegex =
+        /href=["']([^"']*\/phim\/[^"']*\/tap-(\d+)[^"']*\.html)["']/gi;
 
-    let serverMatch;
+    var m;
 
-    while ((serverMatch = serverRegex.exec(html)) !== null) {
+    while ((m = epRegex.exec(html)) !== null) {
 
-        let block = serverMatch[1];
-        let episodes = [];
+        var fullUrl = m[1];
+        var epNumber = parseInt(m[2]);
 
-        let epRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-        let epMatch;
+        if (!epNumber) continue;
 
-        while ((epMatch = epRegex.exec(block)) !== null) {
-
-            let epUrl = epMatch[1];
-            let epName = clean(epMatch[2]);
-
-            if (!epUrl.includes("/phim/")) continue;
-
-            episodes.push({
-                id: epUrl.replace(/^(https?:\/\/[^\/]+)?\//i, ""),
-                name: "Tập " + epName.replace(/tập\s*/i, ""),
-                slug: epUrl
-            });
-        }
-
-        if (episodes.length > 0) {
-            servers.push({
-                name: "Server " + serverIndex,
-                episodes: episodes
-            });
-            serverIndex++;
-        }
+        episodeMap[epNumber] = {
+            id: normalizeUrl(fullUrl),
+            name: "Tập " + epNumber,
+            slug: fullUrl
+        };
     }
 
-    // Fallback nếu site đổi cấu trúc
-    if (servers.length === 0) {
+    // ===== SORT =====
+    var episodeNumbers = Object.keys(episodeMap)
+        .map(n => parseInt(n))
+        .sort((a, b) => a - b);
 
-        let fallbackRegex =
-            /<a[^>]+href=["']([^"']*tap-[^"']+)["'][^>]*>(.*?)<\/a>/gi;
-
-        let eps = [];
-        let m;
-
-        while ((m = fallbackRegex.exec(html)) !== null) {
-            eps.push({
-                id: m[1].replace(/^(https?:\/\/[^\/]+)?\//i, ""),
-                name: "Tập " + clean(m[2]),
-                slug: m[1]
-            });
-        }
-
-        if (eps.length > 0) {
-            servers.push({
-                name: "Server 1",
-                episodes: eps
-            });
-        }
-    }
+    var episodes = episodeNumbers.map(n => episodeMap[n]);
 
     return JSON.stringify({
         title: title,
         posterUrl: poster,
         backdropUrl: poster,
         description: "",
-        servers: servers
+        servers: [
+            {
+                name: "Full Server",
+                episodes: episodes
+            }
+        ]
     });
 }
 
