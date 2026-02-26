@@ -6,7 +6,7 @@ function getManifest() {
     return JSON.stringify({
         "id": "animevietsub",
         "name": "AnimeVietsub",
-        "version": "1.0.9",
+        "version": "1.1.0",
         "baseUrl": "https://animevietsub.be",
         "iconUrl": "https://animevietsub.be/favicon.ico",
         "isEnabled": true,
@@ -169,7 +169,6 @@ function parseMovieDetail(html) {
         var servers = [];
         var episodes = [];
 
-        // Trích xuất danh sách tập (Nếu có)
         var epBlockRegex = /<ul[^>]*class="[^"]*list-episode[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
         var epBlockMatch = epBlockRegex.exec(html);
 
@@ -200,7 +199,6 @@ function parseMovieDetail(html) {
             }
         } 
         
-        // Trích xuất nút "Xem Phim" nếu không tìm thấy danh sách tập (Dành cho Phim Lẻ)
         if (servers.length === 0) {
             var watchUrlMatch = html.match(/<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*(btn-see|play|watch|btn-danger)[^"']*["']/i) ||
                                 html.match(/<a[^>]*href=["'](https?:\/\/[^"']+|(?:\/phim\/)[^"']+)["'][^>]*>(?:<[^>]+>)*\s*Xem Phim\s*(?:<\/[^>]+>)*<\/a>/i);
@@ -254,25 +252,21 @@ function parseDetailResponse(html) {
             return u.replace(/&amp;/g, "&").replace(/\\\/|\\\\/g, "/").replace(/\\\//g, "/");
         };
 
-        // BỘ LỌC CHỐNG RÁC: Chặn tuyệt đối "api", "/phim/...", và các file mã nguồn
         var isValid = function(l) {
-            if (!l || l.length < 10) return false; // Quá ngắn (ví dụ "api") -> Bỏ
+            if (!l || l.length < 10) return false;
             l = l.toLowerCase();
             
-            // Phải là một URL hợp lệ bắt đầu bằng http hoặc //
             if (l.indexOf("http") !== 0 && l.indexOf("//") !== 0) return false;
-            
-            // Tuyệt đối không được chứa đường dẫn của trang chủ HTML
             if (l.indexOf("/phim/") !== -1 || l.indexOf(".html") !== -1 || l.indexOf("/danh-sach/") !== -1) return false;
-            
-            // Tuyệt đối không lấy nhầm file thư viện cấu hình
             if (l.indexOf(".js") !== -1 || l.indexOf(".css") !== -1 || l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1) return false;
-            if (l.indexOf("jwplayer") !== -1 || l.indexOf("facebook") !== -1 || l.indexOf("googletag") !== -1) return false;
+            
+            // TUYỆT ĐỐI CHẶN YOUTUBE (Trailer), và các trang mạng xã hội, quảng cáo
+            if (l.indexOf("youtube") !== -1 || l.indexOf("youtu.be") !== -1 || l.indexOf("jwplayer") !== -1 || l.indexOf("facebook") !== -1 || l.indexOf("googletag") !== -1) return false;
 
             return true;
         };
 
-        // 1. Quét iframe player (Ưu tiên số 1 vì Animevietsub hay dùng iframe cho phim Server HDX/DU)
+        // 1. Quét iframe player
         var iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
         var match;
         while ((match = iframeRegex.exec(html)) !== null) {
@@ -283,7 +277,7 @@ function parseDetailResponse(html) {
             }
         }
 
-        // 2. Quét m3u8 / mp4 trần nếu iframe không có
+        // 2. Quét m3u8 / mp4 trần
         if (!streamUrl) {
             var mediaMatch = html.match(/(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/gi);
             if (mediaMatch) {
@@ -294,7 +288,7 @@ function parseDetailResponse(html) {
             }
         }
 
-        // 3. Quét các biến Script (Trường hợp web ẩn cấu hình iframe bằng Javascript)
+        // 3. Quét các biến Script
         if (!streamUrl) {
             var scriptRegex = /(?:file|url|link_play|play_url)\s*[:=]\s*["']([^"']+)["']/gi;
             var sMatch;
@@ -307,12 +301,6 @@ function parseDetailResponse(html) {
             }
         }
 
-        // 4. Quét Trailer YouTube
-        if (!streamUrl) {
-            var ytMatch = html.match(/youtube\.com\/embed\/([^"'\?&]+)/i) || html.match(/youtube\.com\/watch\?v=([^"'&]+)/i);
-            if (ytMatch) streamUrl = "https://www.youtube.com/watch?v=" + ytMatch[1];
-        }
-
         if (streamUrl) {
             if (streamUrl.indexOf("//") === 0) streamUrl = "https:" + streamUrl;
 
@@ -323,7 +311,6 @@ function parseDetailResponse(html) {
             });
         }
 
-        // Nếu mọi nỗ lực đều thất bại, trả về cấu trúc rỗng thay vì làm app văng do vướng rác
         return "{}";
     } catch (e) {
         return "{}";
