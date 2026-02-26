@@ -124,62 +124,117 @@ function parseListResponse(html) {
 
 // ================= PARSE DETAIL =================
 
-function parseMovieDetail(html) {
+function parseDetailResponse(html) {
 
-    var titleMatch =
-        html.match(/<h1[^>]*>(.*?)<\/h1>/i) ||
-        html.match(/<title>(.*?)<\/title>/i);
+    const BASE = "https://animevietsub.be";
 
-    var title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g,"").trim() : "Anime";
+    const headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": BASE,
+        "Origin": BASE
+    };
 
-    var posterMatch =
-        html.match(/property="og:image" content="([^"]+)"/i);
+    function cleanUrl(u) {
+        if (!u) return "";
+        u = u.replace(/\\\//g, "/").replace(/&amp;/g, "&");
+        if (u.startsWith("//")) u = "https:" + u;
+        return u;
+    }
 
-    var poster = posterMatch ? posterMatch[1] : "";
+    function isVideo(u) {
+        if (!u) return false;
+        let l = u.toLowerCase();
+        return l.includes(".m3u8") || l.includes(".mp4");
+    }
 
-    var servers = [];
-    var serverIndex = 1;
+    let candidates = [];
 
-    var listRegex = /<ul[^>]*class="[^"]*list-episode[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
-    var listMatch;
+    // ==============================
+    // 1️⃣ BẮT m3u8 / mp4 TRỰC TIẾP
+    // ==============================
+    let directRegex = /(https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/gi;
+    let m;
+    while ((m = directRegex.exec(html)) !== null) {
+        candidates.push(cleanUrl(m[1]));
+    }
 
-    while ((listMatch = listRegex.exec(html)) !== null) {
+    // ==============================
+    // 2️⃣ BẮT file: "..."
+    // ==============================
+    let fileRegex = /file\s*:\s*["']([^"']+)["']/gi;
+    while ((m = fileRegex.exec(html)) !== null) {
+        candidates.push(cleanUrl(m[1]));
+    }
 
-        var eps = [];
-        var epRegex = /<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/gi;
-        var epMatch;
+    // ==============================
+    // 3️⃣ BẮT source src=
+    // ==============================
+    let sourceRegex = /source\s+src=["']([^"']+)["']/gi;
+    while ((m = sourceRegex.exec(html)) !== null) {
+        candidates.push(cleanUrl(m[1]));
+    }
 
-        while ((epMatch = epRegex.exec(listMatch[1])) !== null) {
+    // ==============================
+    // 4️⃣ BASE64 decode
+    // ==============================
+    let base64Regex = /aHR0c[0-9A-Za-z+/=]+/g;
+    while ((m = base64Regex.exec(html)) !== null) {
+        try {
+            let decoded = atob(m[0]);
+            if (decoded.startsWith("http"))
+                candidates.push(cleanUrl(decoded));
+        } catch (e) {}
+    }
 
-            var epUrl = epMatch[1];
-            var epName = epMatch[2].replace(/<[^>]*>/g,"").trim();
-
-            if (epUrl.indexOf("/phim/") === -1) continue;
-
-            eps.push({
-                id: epUrl.replace(/^(https?:\/\/[^\/]+)?\//i,""),
-                name: "Tập " + epName,
-                slug: epUrl
+    // ==============================
+    // 5️⃣ KIỂM TRA CÓ VIDEO KHÔNG
+    // ==============================
+    for (let i = 0; i < candidates.length; i++) {
+        if (isVideo(candidates[i])) {
+            return JSON.stringify({
+                url: candidates[i],
+                headers: headers,
+                subtitles: []
             });
-        }
-
-        if (eps.length > 0) {
-            servers.push({
-                name: "Server " + serverIndex,
-                episodes: eps
-            });
-            serverIndex++;
         }
     }
 
-    return JSON.stringify({
-        title: title,
-        posterUrl: poster,
-        backdropUrl: poster,
-        description: "",
-        servers: servers
-    });
+    // ==============================
+    // 6️⃣ NẾU KHÔNG CÓ → BẮT IFRAME
+    // ==============================
+    let iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
+    while ((m = iframeRegex.exec(html)) !== null) {
+
+        let iframeUrl = cleanUrl(m[1]);
+
+        if (!iframeUrl) continue;
+
+        // Trả về iframe để app fetch tiếp
+        return JSON.stringify({
+            url: iframeUrl,
+            headers: headers,
+            subtitles: []
+        });
+    }
+
+    // ==============================
+    // 7️⃣ BẮT embed/player trong script
+    // ==============================
+    let embedRegex = /(https?:\/\/[^"']+(?:embed|player)[^"']*)/gi;
+    while ((m = embedRegex.exec(html)) !== null) {
+
+        let embedUrl = cleanUrl(m[1]);
+
+        return JSON.stringify({
+            url: embedUrl,
+            headers: headers,
+            subtitles: []
+        });
+    }
+
+    return "{}";
 }
+
 // ================= STREAM PRO PLUS =================
 
 function parseDetailResponse(html) {
