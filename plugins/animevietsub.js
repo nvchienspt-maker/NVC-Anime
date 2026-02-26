@@ -6,7 +6,7 @@ function getManifest() {
     return JSON.stringify({
         "id": "animevietsub",
         "name": "AnimeVietsub",
-        "version": "1.1.1",
+        "version": "1.1.2",
         "baseUrl": "https://animevietsub.be",
         "iconUrl": "https://animevietsub.be/favicon.ico",
         "isEnabled": true,
@@ -199,11 +199,13 @@ function parseMovieDetail(html) {
             }
         } 
         
+        // CỨU CÁNH: Nếu phim lẻ không có danh sách tập, phải tìm chính xác nút "Xem Phim"
         if (servers.length === 0) {
-            var watchUrlMatch = html.match(/<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*(btn-see|play|watch|btn-danger)[^"']*["']/i) ||
-                                html.match(/<a[^>]*href=["'](https?:\/\/[^"']+|(?:\/phim\/)[^"']+)["'][^>]*>(?:<[^>]+>)*\s*Xem Phim\s*(?:<\/[^>]+>)*<\/a>/i);
+            var watchMatch = html.match(/<a[^>]*href=["']([^"']+xem-phim\.html)["']/i) ||
+                             html.match(/<a[^>]*id=["']btn-film-watch["'][^>]*href=["']([^"']+)["']/i) ||
+                             html.match(/<a[^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*(btn-see|play|watch|btn-danger)[^"']*["']/i);
             
-            var watchUrl = watchUrlMatch ? (watchUrlMatch[1] || watchUrlMatch[2]) : "";
+            var watchUrl = watchMatch ? (watchMatch[1] || watchMatch[2]) : "";
 
             if (watchUrl && watchUrl !== "#" && watchUrl.indexOf("javascript") === -1) {
                 var watchId = watchUrl.replace(/^(https?:\/\/[^\/]+)?\//i, "");
@@ -244,86 +246,74 @@ function parseDetailResponse(html) {
             "Origin": "https://animevietsub.be"
         };
 
-        var bestM3u8 = "";
-        var bestIframe = "";
-
-        // Hàm dọn dẹp các ký tự thừa
-        var decodeUrl = function (u) {
-            if (!u) return "";
-            return u.replace(/&amp;/g, "&").replace(/\\\/|\\\\/g, "/").replace(/\\\//g, "/");
-        };
-
-        // Hàm xử lý link: Đưa mọi link được tìm thấy qua màng lọc tuyệt đối
+        // Hàm kiểm duyệt Thép: Lọc bỏ hoàn toàn rác và quảng cáo
         var processUrl = function(u) {
-            u = decodeUrl(u);
-            if (!u || u.length < 15) return;
+            if (!u) return "";
+            u = u.replace(/&amp;/g, "&").replace(/\\\/|\\\\/g, "/").replace(/\\\//g, "/");
             var l = u.toLowerCase();
-            
-            // 1. Phải là một URL định dạng chuẩn
-            if (l.indexOf("http") !== 0 && l.indexOf("//") !== 0) return;
-            
-            // 2. Chặn tuyệt đối rác (JS, CSS, Ảnh)
-            if (l.indexOf(".js") !== -1 && l.indexOf(".m3u8") === -1) return;
-            if (l.indexOf(".css") !== -1 || l.indexOf(".png") !== -1 || l.indexOf(".jpg") !== -1 || l.indexOf(".gif") !== -1 || l.indexOf(".ico") !== -1) return;
-            
-            // 3. Chặn mạng xã hội và Trailer Youtube
-            if (l.indexOf("youtube") !== -1 || l.indexOf("youtu.be") !== -1 || l.indexOf("facebook") !== -1 || l.indexOf("googletag") !== -1) return;
-            
-            // 4. CHẶN VÒNG LẶP HTML: Bỏ qua các link trang web (ví dụ tap-01.html) nếu không chứa từ khóa của player
-            if (l.indexOf("animevietsub") !== -1) {
-                if (l.indexOf("/phim/") !== -1 || l.indexOf("/danh-sach/") !== -1 || l.indexOf("/tap-") !== -1) {
-                    return;
-                }
-                if (l.indexOf(".html") !== -1 && l.indexOf("player") === -1 && l.indexOf("v2") === -1) {
-                    return;
+
+            if (l.indexOf("http") !== 0 && l.indexOf("//") !== 0) return "";
+            if (l.length < 15) return ""; // Chặn các chuỗi ngắn củn như 'api'
+
+            // DANH SÁCH ĐEN: Chặn tuyệt đối
+            var blocked = ["sunwin", "bet", "casino", "youtube", "youtu.be", "facebook", "googletag", ".js", ".css", ".png", ".jpg", ".gif", "jwplayer", "/phim/", "-5467", "api"];
+            for (var i = 0; i < blocked.length; i++) {
+                if (l.indexOf(blocked[i]) !== -1) {
+                    // Ngoại lệ: Nếu link có đuôi m3u8 thật thì cho qua, nhưng youtube/facebook/sunwin thì giết sạch
+                    if ((l.indexOf(".m3u8") !== -1 || l.indexOf(".mp4") !== -1) && blocked[i] !== "sunwin" && blocked[i] !== "youtube" && blocked[i] !== "facebook") {
+                        continue; 
+                    }
+                    return "";
                 }
             }
 
-            // Phân loại: Ưu tiên bắt m3u8 tuyệt đối, nếu không thì lấy iframe dự phòng
-            if (l.indexOf(".m3u8") !== -1) {
-                bestM3u8 = u;
-            } else if (!bestIframe && (l.indexOf("player") !== -1 || l.indexOf("embed") !== -1 || l.indexOf(".mp4") !== -1)) {
-                bestIframe = u;
+            // CHỈ CHO PHÉP luồng video thực sự đi qua
+            if (l.indexOf(".m3u8") !== -1 || l.indexOf(".mp4") !== -1 || l.indexOf("/player/") !== -1 || l.indexOf("/embed/") !== -1 || l.indexOf("v2") !== -1) {
+                return u;
             }
+            return "";
         };
 
-        // KỊCH BẢN 1: Tóm chuỗi Base64 giấu trong thẻ data-hash hoặc script
-        var base64Regex = /aHR0c[a-zA-Z0-9\+\/\=]+/g;
-        var bMatch;
-        while ((bMatch = base64Regex.exec(html)) !== null) {
-            try { processUrl(atob(bMatch[0])); } catch(e) {}
-        }
+        var candidates = [];
 
-        // KỊCH BẢN 2: Quét thẻ iframe tường minh (hỗ trợ cả đường dẫn URL tương đối)
+        // 1. Quét thẻ iframe 
         var iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
-        var iMatch;
-        while ((iMatch = iframeRegex.exec(html)) !== null) {
-            var src = iMatch[1];
-            if (src.indexOf("/") === 0 && src.indexOf("//") !== 0) {
-                src = "https://animevietsub.be" + src;
+        var iMatch; while ((iMatch = iframeRegex.exec(html)) !== null) { candidates.push(iMatch[1]); }
+
+        // 2. Quét thẻ data- của các nút Server (Thường dùng cho Server DU, HDX)
+        var dataRegex = /data-(?:href|play|url|server)=["']([^"']+)["']/gi;
+        var dMatch; while ((dMatch = dataRegex.exec(html)) !== null) { candidates.push(dMatch[1]); }
+
+        // 3. Quét biến Javascript cấu hình
+        var scriptRegex = /(?:file|url|link_play|play_url|src)\s*[:=]\s*["']([^"']+)["']/gi;
+        var sMatch; while ((sMatch = scriptRegex.exec(html)) !== null) { candidates.push(sMatch[1]); }
+
+        // 4. Giải mã Base64 (Thủ thuật Animevietsub hay giấu link sau chuỗi aHR0cHM6Ly...)
+        var base64Regex = /aHR0c[a-zA-Z0-9\+\/\=]+/g;
+        var bMatch; while ((bMatch = base64Regex.exec(html)) !== null) { 
+            try { candidates.push(atob(bMatch[0])); } catch(e){} 
+        }
+
+        // 5. Quét m3u8 trần trong HTML
+        var m3u8Regex = /(https?:\/\/[^"'\s<>\[\]]+\.(?:m3u8|mp4)[^"'\s<>\[\]]*)/gi;
+        var mMatch; while ((mMatch = m3u8Regex.exec(html)) !== null) { candidates.push(mMatch[1]); }
+
+        // Lọc vàng từ cát: Đưa tất cả vào bộ kiểm duyệt
+        for (var idx = 0; idx < candidates.length; idx++) {
+            var safeUrl = processUrl(candidates[idx]);
+            if (safeUrl) {
+                streamUrl = safeUrl;
+                // Nếu tìm thấy m3u8, ưu tiên chốt luôn
+                if (streamUrl.indexOf(".m3u8") !== -1 || streamUrl.indexOf(".mp4") !== -1) {
+                    break;
+                }
             }
-            processUrl(src);
         }
 
-        // KỊCH BẢN 3: Quét vét cạn mọi URL nằm trần trong toàn bộ mã HTML (Phòng khi link bị tách đôi)
-        var urlRegex = /(?:https?:)?\/\/[a-zA-Z0-9\-\.\_\~\:\/\?\#\[\]\@\!\$\&\'\(\)\*\+\,\;\=\%]+/gi;
-        var uMatch;
-        while ((uMatch = urlRegex.exec(html)) !== null) {
-            processUrl(uMatch[0]);
-        }
-
-        // Ưu tiên m3u8. Nếu phim AnimeVietsub chỉ có iframe nhúng thì lấy iframe.
-        streamUrl = bestM3u8 || bestIframe;
-
+        // Trả kết quả chuẩn
         if (streamUrl) {
-            // Chuẩn hóa định dạng HTTPS
             if (streamUrl.indexOf("//") === 0) streamUrl = "https:" + streamUrl;
-
-            return JSON.stringify({
-                url: streamUrl,
-                headers: headers,
-                subtitles: []
-            });
+            return JSON.stringify({ url: streamUrl, headers: headers, subtitles: [] });
         }
 
         return "{}";
