@@ -1,6 +1,6 @@
-// ======================================
-// NVC ANIME - ANIMEVIETSUB CLEAN ENGINE
-// ======================================
+// =====================================
+// NVC ANIME - ANIMEVIETSUB STABLE CORE
+// =====================================
 
 const BASE_URL = "https://animevietsub.be";
 
@@ -8,14 +8,32 @@ const BASE_URL = "https://animevietsub.be";
 
 function getManifest() {
     return JSON.stringify({
-        id: "animevietsub_clean",
+        id: "animevietsub_stable",
         name: "AnimeVietsub",
-        version: "4.0.0",
+        version: "5.0.0",
         baseUrl: BASE_URL,
         iconUrl: BASE_URL + "/favicon.ico",
-        isAdult: false,
         type: "MOVIE"
     });
+}
+
+// ================= UTIL =================
+
+function clean(t) {
+    return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
+}
+
+function normalizeUrl(u) {
+    if (!u) return "";
+    u = u.replace(/\\\//g, "/").replace(/&amp;/g, "&");
+    if (u.startsWith("//")) u = "https:" + u;
+    return u;
+}
+
+function isVideo(u) {
+    if (!u) return false;
+    let l = u.toLowerCase();
+    return l.includes(".m3u8") || l.includes(".mp4");
 }
 
 // ================= URL =================
@@ -39,52 +57,23 @@ function getUrlDetail(slug) {
     return BASE_URL + "/" + slug.replace(/^\//, "");
 }
 
-// ================= UTIL =================
-
-function clean(text) {
-    return text
-        ? text.replace(/<[^>]*>/g, "")
-              .replace(/\s+/g, " ")
-              .trim()
-        : "";
-}
-
-function normalizeUrl(u) {
-    if (!u) return "";
-    u = u.replace(/\\\//g, "/").replace(/&amp;/g, "&");
-    if (u.startsWith("//")) u = "https:" + u;
-    return u;
-}
-
-function isVideo(u) {
-    if (!u) return false;
-    let l = u.toLowerCase();
-    return l.includes(".m3u8") || l.includes(".mp4");
-}
-
 // ================= PARSE LIST =================
 
 function parseListResponse(html) {
 
     let items = [];
-    let found = {};
+    let map = {};
 
-    // Bắt block card phim thay vì quét toàn bộ <a>
-    let blockRegex = /<div[^>]*class="[^"]*(?:TPostMv|item|MovieList)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>?/gi;
-    let block;
+    let blockRegex = /<a[^>]+href="([^"]*\/phim\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    let m;
 
-    while ((block = blockRegex.exec(html)) !== null) {
+    while ((m = blockRegex.exec(html)) !== null) {
 
-        let content = block[1];
-
-        let linkMatch = content.match(/<a[^>]+href="([^"]+)"[^>]*>/i);
-        if (!linkMatch) continue;
-
-        let link = linkMatch[1];
-        if (!link.includes("/phim/")) continue;
+        let link = m[1];
+        let content = m[2];
 
         let id = link.replace(/^(https?:\/\/[^\/]+)?\//i, "");
-        if (found[id]) continue;
+        if (map[id]) continue;
 
         let titleMatch =
             content.match(/title="([^"]+)"/i) ||
@@ -104,167 +93,69 @@ function parseListResponse(html) {
             quality: "HD"
         });
 
-        found[id] = true;
+        map[id] = true;
     }
 
     return JSON.stringify({
         items: items,
-        pagination: {
-            currentPage: 1,
-            totalPages: 50
-        }
+        pagination: { currentPage: 1, totalPages: 50 }
     });
 }
 
-// ================= PARSE DETAIL =================
+// ================= PARSE DETAIL (FULL EPISODES) =================
 
 function parseMovieDetail(html) {
 
-    function clean(t) {
-        return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
-    }
-
-    var titleMatch =
+    let titleMatch =
         html.match(/<h1[^>]*>(.*?)<\/h1>/i) ||
         html.match(/<title>(.*?)<\/title>/i);
 
-    var title = titleMatch ? clean(titleMatch[1]) : "Anime";
+    let title = titleMatch ? clean(titleMatch[1]) : "Anime";
 
-    var posterMatch =
+    let posterMatch =
         html.match(/property="og:image" content="([^"]+)"/i);
 
-    var poster = posterMatch ? posterMatch[1] : "";
+    let poster = posterMatch ? posterMatch[1] : "";
 
-    // 🔥 BẮT MOVIE ID
-    var idMatch =
-        html.match(/data-id=["']?(\d+)["']?/i) ||
-        html.match(/movie_id\s*=\s*["']?(\d+)/i) ||
-        html.match(/"film_id"\s*:\s*"(\d+)"/i);
+    // 🔥 QUÉT TOÀN BỘ LINK TAP-XX
+    let episodeMap = {};
+    let epRegex = /href=["']([^"']*\/phim\/[^"']*\/tap-(\d+)[^"']*\.html)["']/gi;
+    let m;
 
-    if (!idMatch) {
-        return JSON.stringify({
-            title: title,
-            posterUrl: poster,
-            backdropUrl: poster,
-            description: "",
-            servers: []
-        });
+    while ((m = epRegex.exec(html)) !== null) {
+
+        let fullUrl = m[1];
+        let epNumber = parseInt(m[2]);
+        if (!epNumber) continue;
+
+        episodeMap[epNumber] = {
+            id: fullUrl.replace(/^(https?:\/\/[^\/]+)?\//i, ""),
+            name: "Tập " + epNumber,
+            slug: fullUrl
+        };
     }
 
-    var movieId = idMatch[1];
+    let numbers = Object.keys(episodeMap)
+        .map(n => parseInt(n))
+        .sort((a, b) => a - b);
+
+    let episodes = numbers.map(n => episodeMap[n]);
 
     return JSON.stringify({
         title: title,
         posterUrl: poster,
         backdropUrl: poster,
         description: "",
-        ajaxEpisodeUrl: BASE_URL + "/ajax/episode/list/" + movieId,
-        servers: []
-    });
-}
-
-//=================parseAjaxEpisode (FULL DANH SÁCH TẬP)==========
-
-function parseAjaxEpisode(html) {
-
-    function clean(t) {
-        return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
-    }
-
-    function normalizeUrl(u) {
-        return u.replace(/^(https?:\/\/[^\/]+)?\//i, "");
-    }
-
-    var servers = [];
-    var serverIndex = 1;
-
-    // AJAX trả HTML có dạng:
-    // <div class="server"> ... <a href="...">1</a>
-
-    var serverRegex =
-        /<div[^>]*class="[^"]*server[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>?/gi;
-
-    var serverMatch;
-
-    while ((serverMatch = serverRegex.exec(html)) !== null) {
-
-        var block = serverMatch[1];
-        var episodes = [];
-
-        // Đã sửa: Bắt linh hoạt mọi link tập phim thay vì gò bó vào /tap-...\.html/
-        var epRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-
-        var epMatch;
-
-        while ((epMatch = epRegex.exec(block)) !== null) {
-
-            var fullUrl = epMatch[1];
-            var epName = clean(epMatch[2]);
-
-            // Chuẩn hóa tên tập nếu nó chỉ là số
-            if (epName && !epName.toLowerCase().includes("tập") && !isNaN(epName)) {
-                epName = "Tập " + epName;
-            } else if (!epName) {
-                epName = "Tập";
-            }
-
-            episodes.push({
-                id: normalizeUrl(fullUrl),
-                name: epName,
-                slug: fullUrl
-            });
-        }
-
-        if (episodes.length > 0) {
-            servers.push({
-                name: "Server " + serverIndex,
-                episodes: episodes
-            });
-            serverIndex++;
-        }
-    }
-
-    // 🔥 Nếu site không chia server, gom tất cả
-    if (servers.length === 0) {
-
-        var allEpisodes = [];
-        
-        // Đã sửa: Cập nhật fallback Regex tương tự như trên
-        var fallbackRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-
-        var m;
-
-        while ((m = fallbackRegex.exec(html)) !== null) {
-            var fullUrl = m[1];
-            var epName = clean(m[2]);
-
-            if (epName && !epName.toLowerCase().includes("tập") && !isNaN(epName)) {
-                epName = "Tập " + epName;
-            } else if (!epName) {
-                epName = "Tập";
-            }
-
-            allEpisodes.push({
-                id: normalizeUrl(fullUrl),
-                name: epName,
-                slug: fullUrl
-            });
-        }
-
-        if (allEpisodes.length > 0) {
-            servers.push({
+        servers: [
+            {
                 name: "Full Server",
-                episodes: allEpisodes
-            });
-        }
-    }
-
-    return JSON.stringify({
-        servers: servers
+                episodes: episodes
+            }
+        ]
     });
 }
 
-// ================= STREAM ENGINE =================
+// ================= STREAM RESOLVER =================
 
 function parseDetailResponse(html) {
 
@@ -316,9 +207,8 @@ function parseDetailResponse(html) {
         }
     }
 
-    // 6️⃣ Nếu chưa có video → bắt iframe để Flutter follow
-    // Đã sửa: Bổ sung thêm data-src để bắt được các iframe dùng cơ chế lazy load
-    let iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
+    // 6️⃣ Nếu chưa có video → follow iframe
+    let iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
     while ((m = iframeRegex.exec(html)) !== null) {
 
         let iframeUrl = normalizeUrl(m[1]);
