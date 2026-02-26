@@ -97,6 +97,7 @@ function getUrlSearch(keyword, filtersJson) {
     return `${BASE_URL}/tim-kiem/${encodeURIComponent(keyword)}/trang-${page}.html`;
 }
 
+//========================================================
 function getUrlDetail(slug) {
     if (!slug) return "";
     if (slug.indexOf("http") === 0) {
@@ -126,6 +127,7 @@ var PluginUtils = {
     }
 };
 
+//====================================
 function parseListResponse(html) {
     let items = [];
     let found = {};
@@ -203,6 +205,7 @@ function parseListResponse(html) {
     });
 }
 
+//===============================================
 function parseSearchResponse(html) {
     return parseListResponse(html);
 }
@@ -244,7 +247,7 @@ function parseMovieDetail(html) {
     });
 }
 
-// Bắt buộc giữ lại hàm này cho file Dart của bạn
+// =================Bắt buộc giữ lại hàm này cho file Dart của bạn Full tập ==============
 function parseAjaxEpisode(html) {
     function normPath(u) {
         u = u.replace(/\\\//g, "/").replace(/&amp;/g, "&");
@@ -312,6 +315,8 @@ function parseAjaxEpisode(html) {
     return JSON.stringify({ servers: servers });
 }
 
+// ================= STREAM ENGINE =================
+
 function parseDetailResponse(html) {
     const headers = {
         "User-Agent": "Mozilla/5.0",
@@ -319,24 +324,37 @@ function parseDetailResponse(html) {
         "Origin": BASE_URL
     };
 
+    // 0️⃣ Xử lý trường hợp lớp hiện tại trả về JSON (Lớp 4 API Token trả về M3U8)
+    try {
+        let json = JSON.parse(html);
+        let stream = json.file || json.url || json.data || json.link || json.source;
+        if (stream && typeof stream === 'string' && (stream.includes(".m3u8") || stream.includes(".mp4"))) {
+            return JSON.stringify({ url: stream, headers: headers, subtitles: [] });
+        }
+    } catch (e) {}
+
     let candidates = [];
     let m;
 
+    // 1️⃣ Bắt m3u8/mp4 lộ diện trực tiếp (Lớp 5)
     let directRegex = /(https?:\/\/[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*)/gi;
     while ((m = directRegex.exec(html)) !== null) {
         candidates.push(PluginUtils.normalizeUrl(m[1]));
     }
 
+    // 2️⃣ Bắt Iframe của Server/Player (Lớp 2, Lớp 3)
     let iframeRegex = /<iframe[^>]+(?:src|data-src|data-url)=["']([^"']+)["']/gi;
     while ((m = iframeRegex.exec(html)) !== null) {
         candidates.push(PluginUtils.normalizeUrl(m[1]));
     }
 
-    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|file|data-href|data-embed)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
+    // 3️⃣ Bắt API/Token ẩn trong biến JS (Lớp 4)
+    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|file|data-href|data-embed|api_url|source_api|ajax_url)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
     while ((m = jsRegex.exec(html)) !== null) {
         candidates.push(PluginUtils.normalizeUrl(m[1]));
     }
 
+    // 🔥 Ưu tiên trả về M3U8 ngay lập tức
     for (let i = 0; i < candidates.length; i++) {
         let u = candidates[i];
         if (u.toLowerCase().includes(".m3u8") || u.toLowerCase().includes(".mp4")) {
@@ -344,8 +362,10 @@ function parseDetailResponse(html) {
         }
     }
 
+    // 🔥 Trả về link Iframe/API để Flutter tiếp tục tải HTML lớp tiếp theo
     for (let i = 0; i < candidates.length; i++) {
         let u = candidates[i];
+        
         let isJunkDomain = u.match(/facebook\.com|youtube\.com|google\.com|googleapis\.com|recaptcha|twitter|ads|doubleclick|googletagmanager|analytics/i);
         let isJunkExtension = u.match(/\.(js|css|png|jpg|jpeg|gif|webp|svg|ico)(\?.*)?$/i);
 
@@ -356,6 +376,8 @@ function parseDetailResponse(html) {
 
     return "{}";
 }
+
+//==========================
 
 function parseCategoriesResponse(html) {
     return getPrimaryCategories(); 
