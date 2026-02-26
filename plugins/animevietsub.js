@@ -191,19 +191,26 @@ function parseAjaxEpisode(html) {
         var block = serverMatch[1];
         var episodes = [];
 
-        var epRegex =
-            /href=["']([^"']*tap-(\d+)[^"']*\.html)["'][^>]*>(.*?)<\/a>/gi;
+        // Đã sửa: Bắt linh hoạt mọi link tập phim thay vì gò bó vào /tap-...\.html/
+        var epRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
 
         var epMatch;
 
         while ((epMatch = epRegex.exec(block)) !== null) {
 
             var fullUrl = epMatch[1];
-            var epNumber = epMatch[2];
+            var epName = clean(epMatch[2]);
+
+            // Chuẩn hóa tên tập nếu nó chỉ là số
+            if (epName && !epName.toLowerCase().includes("tập") && !isNaN(epName)) {
+                epName = "Tập " + epName;
+            } else if (!epName) {
+                epName = "Tập";
+            }
 
             episodes.push({
                 id: normalizeUrl(fullUrl),
-                name: "Tập " + epNumber,
+                name: epName,
                 slug: fullUrl
             });
         }
@@ -221,16 +228,26 @@ function parseAjaxEpisode(html) {
     if (servers.length === 0) {
 
         var allEpisodes = [];
-        var fallbackRegex =
-            /href=["']([^"']*tap-(\d+)[^"']*\.html)["']/gi;
+        
+        // Đã sửa: Cập nhật fallback Regex tương tự như trên
+        var fallbackRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
 
         var m;
 
         while ((m = fallbackRegex.exec(html)) !== null) {
+            var fullUrl = m[1];
+            var epName = clean(m[2]);
+
+            if (epName && !epName.toLowerCase().includes("tập") && !isNaN(epName)) {
+                epName = "Tập " + epName;
+            } else if (!epName) {
+                epName = "Tập";
+            }
+
             allEpisodes.push({
-                id: normalizeUrl(m[1]),
-                name: "Tập " + m[2],
-                slug: m[1]
+                id: normalizeUrl(fullUrl),
+                name: epName,
+                slug: fullUrl
             });
         }
 
@@ -300,7 +317,8 @@ function parseDetailResponse(html) {
     }
 
     // 6️⃣ Nếu chưa có video → bắt iframe để Flutter follow
-    let iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
+    // Đã sửa: Bổ sung thêm data-src để bắt được các iframe dùng cơ chế lazy load
+    let iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
     while ((m = iframeRegex.exec(html)) !== null) {
 
         let iframeUrl = normalizeUrl(m[1]);
