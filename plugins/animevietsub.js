@@ -72,41 +72,45 @@ function isValidVideo(url) {
 
 function parseListResponse(html) {
 
-    let items = [];
-    let seen = {};
+    var items = [];
+    var found = {};
 
-    let regex = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let match;
+    // Bắt đúng block card phim
+    var blockRegex = /<div[^>]*class="[^"]*(?:TPostMv|item)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi;
+    var block;
 
-    while ((match = regex.exec(html)) !== null) {
+    while ((block = blockRegex.exec(html)) !== null) {
 
-        let link = match[1];
-        if (!link.includes("/phim/")) continue;
+        var content = block[1];
 
-        let id = link.replace(/^(https?:\/\/[^\/]+)?\//, "");
-        if (seen[id]) continue;
+        var linkMatch = content.match(/<a[^>]+href="([^"]+)"[^>]*>/i);
+        if (!linkMatch) continue;
 
-        let inner = match[2];
+        var link = linkMatch[1];
+        if (link.indexOf("/phim/") === -1) continue;
 
-        let titleMatch =
-            inner.match(/title="([^"]+)"/i) ||
-            inner.match(/alt="([^"]+)"/i);
+        var id = link.replace(/^(https?:\/\/[^\/]+)?\//i, "");
+        if (found[id]) continue;
 
-        let imgMatch =
-            inner.match(/src="([^"]+)"/i) ||
-            inner.match(/data-src="([^"]+)"/i);
+        var titleMatch =
+            content.match(/title="([^"]+)"/i) ||
+            content.match(/alt="([^"]+)"/i);
 
         if (!titleMatch) continue;
 
+        var imgMatch =
+            content.match(/src="([^"]+)"/i) ||
+            content.match(/data-src="([^"]+)"/i);
+
         items.push({
             id: id,
-            title: clean(titleMatch[1]),
+            title: titleMatch[1].trim(),
             posterUrl: imgMatch ? imgMatch[1] : "",
             backdropUrl: imgMatch ? imgMatch[1] : "",
             quality: "HD"
         });
 
-        seen[id] = true;
+        found[id] = true;
     }
 
     return JSON.stringify({
@@ -122,40 +126,38 @@ function parseListResponse(html) {
 
 function parseMovieDetail(html) {
 
-    let titleMatch =
+    var titleMatch =
         html.match(/<h1[^>]*>(.*?)<\/h1>/i) ||
         html.match(/<title>(.*?)<\/title>/i);
 
-    let title = titleMatch ? clean(titleMatch[1]) : "Anime";
+    var title = titleMatch ? titleMatch[1].replace(/<[^>]*>/g,"").trim() : "Anime";
 
-    let posterMatch =
+    var posterMatch =
         html.match(/property="og:image" content="([^"]+)"/i);
 
-    let poster = posterMatch ? posterMatch[1] : "";
+    var poster = posterMatch ? posterMatch[1] : "";
 
-    let servers = [];
-    let serverIndex = 1;
+    var servers = [];
+    var serverIndex = 1;
 
-    let blockRegex =
-        /<ul[^>]*class="[^"]*(?:list-episode|halim-list-eps)[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
+    var listRegex = /<ul[^>]*class="[^"]*list-episode[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
+    var listMatch;
 
-    let block;
+    while ((listMatch = listRegex.exec(html)) !== null) {
 
-    while ((block = blockRegex.exec(html)) !== null) {
+        var eps = [];
+        var epRegex = /<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/gi;
+        var epMatch;
 
-        let eps = [];
-        let epRegex = /<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/gi;
-        let epMatch;
+        while ((epMatch = epRegex.exec(listMatch[1])) !== null) {
 
-        while ((epMatch = epRegex.exec(block[1])) !== null) {
+            var epUrl = epMatch[1];
+            var epName = epMatch[2].replace(/<[^>]*>/g,"").trim();
 
-            let epUrl = epMatch[1];
-            let epName = clean(epMatch[2]);
-
-            if (!epUrl.includes("/phim/")) continue;
+            if (epUrl.indexOf("/phim/") === -1) continue;
 
             eps.push({
-                id: epUrl.replace(/^(https?:\/\/[^\/]+)?\//, ""),
+                id: epUrl.replace(/^(https?:\/\/[^\/]+)?\//i,""),
                 name: "Tập " + epName,
                 slug: epUrl
             });
@@ -178,7 +180,6 @@ function parseMovieDetail(html) {
         servers: servers
     });
 }
-
 // ================= STREAM PRO PLUS =================
 
 function parseDetailResponse(html) {
