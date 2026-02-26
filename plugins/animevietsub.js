@@ -57,7 +57,6 @@ function getUrlDetail(slug) {
     return BASE_URL + "/" + slug.replace(/^\//, "");
 }
 
-// ================= PARSE LIST =================
 
 // ================= PARSE LIST =================
 
@@ -176,6 +175,73 @@ function parseMovieDetail(html) {
     });
 }
 
+//=================parseAjaxEpisode (FULL DANH SÁCH TẬP)==========
+
+function parseAjaxEpisode(html) {
+
+    function clean(t) {
+        return t ? t.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim() : "";
+    }
+
+    function normalizeUrl(u) {
+        return u.replace(/^(https?:\/\/[^\/]+)?\//i, "");
+    }
+
+    var servers = [];
+    var allEpisodes = [];
+    var foundEps = {};
+
+    // Đã sửa: Quét toàn bộ thẻ <a> trên trang có chứa chuỗi "/tap-" và đuôi ".html"
+    // Bắt chính xác định dạng: /phim/yuusha-.../tap-01-110919.html
+    var epRegex = /<a[^>]+href=["']([^"']+\/tap-[^"']+\.html)["'][^>]*>(.*?)<\/a>/gi;
+    var m;
+
+    while ((m = epRegex.exec(html)) !== null) {
+        var fullUrl = m[1];
+        var epName = clean(m[2]);
+
+        // Bỏ qua các link chứa thẻ tag, category (link rác không phải tập phim)
+        if (fullUrl.includes("tag=") || fullUrl.includes("category=")) continue;
+
+        // Tự động trích xuất số tập nếu web hiển thị thiếu tên (chỉ có icon hoặc chuỗi rỗng)
+        if (!epName || (!isNaN(epName) && epName.trim() !== "")) {
+            let numMatch = fullUrl.match(/tap-(\d+)/i);
+            if (numMatch) {
+                epName = "Tập " + numMatch[1];
+            } else if (!isNaN(epName) && epName.trim() !== "") {
+                epName = "Tập " + epName;
+            } else {
+                epName = "Tập";
+            }
+        } else if (!epName.toLowerCase().includes("tập") && !isNaN(epName.trim())) {
+            epName = "Tập " + epName.trim();
+        }
+
+        var id = normalizeUrl(fullUrl);
+
+        // Chống lặp tập (nếu trang chèn 2 link giống nhau cho cùng 1 tập)
+        if (!foundEps[id]) {
+            allEpisodes.push({
+                id: id,
+                name: epName,
+                slug: fullUrl
+            });
+            foundEps[id] = true;
+        }
+    }
+
+    if (allEpisodes.length > 0) {
+        servers.push({
+            name: "Server Anime", // Gộp chung vào 1 server nếu web không phân cụm
+            episodes: allEpisodes
+        });
+    }
+
+    return JSON.stringify({
+        servers: servers
+    });
+}
+
 // ================= STREAM ENGINE =================
 
 function parseDetailResponse(html) {
@@ -189,83 +255,52 @@ function parseDetailResponse(html) {
     let candidates = [];
     let m;
 
-    // 1️⃣ m3u8 / mp4 trực tiếp
-    let directRegex = /(https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/gi;
+    // Hàm phụ trợ chuẩn hóa URL nội bộ
+    function normUrl(u) {
+        if (!u) return "";
+        u = u.replace(/\\\//g, "/").replace(/&amp;/g, "&");
+        if (u.startsWith("//")) u = "https:" + u;
+        return u;
+    }
+
+    // 1️⃣ Bắt link m3u8 / mp4 lộ diện trực tiếp
+    let directRegex = /(https?:\/\/[^"'\s]+\.(?:m3u8|mp4)[^"'\s]*)/gi;
     while ((m = directRegex.exec(html)) !== null) {
-        candidates.push(normalizeUrl(m[1]));
+        candidates.push(normUrl(m[1]));
     }
 
-    // 2️⃣ file: "..."
-    let fileRegex = /file\s*:\s*["']([^"']+)["']/gi;
-    while ((m = fileRegex.exec(html)) !== null) {
-        candidates.push(normalizeUrl(m[1]));
-    }
-
-    // 3️⃣ source src
-    let sourceRegex = /source\s+src=["']([^"']+)["']/gi;
-    while ((m = sourceRegex.exec(html)) !== null) {
-        candidates.push(normalizeUrl(m[1]));
-    }
-
-    // 4️⃣ base64
-    let base64Regex = /aHR0c[0-9A-Za-z+/=]+/g;
-    while ((m = base64Regex.exec(html)) !== null) {
-        try {
-            let decoded = atob(m[0]);
-            if (decoded.startsWith("http"))
-                candidates.push(normalizeUrl(decoded));
-        } catch (e) {}
-    }
-
-    // 5️⃣ Trả video nếu có
-    for (let i = 0; i < candidates.length; i++) {
-        if (isVideo(candidates[i])) {
-            return JSON.stringify({
-                url: candidates[i],
-                headers: headers,
-                subtitles: []
-            });
-        }
-    }
-
-    // 🔥 ĐÃ SỬA: Tìm link lồng trong các biến Javascript (trường hợp web dùng JS để render iframe)
-    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|link)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
-    while ((m = jsRegex.exec(html)) !== null) {
-        let jsUrl = normalizeUrl(m[1]);
-        if (!jsUrl.match(/facebook\.com|youtube\.com|google\.com|recaptcha|twitter|ads|doubleclick/i)) {
-            return JSON.stringify({
-                url: jsUrl,
-                headers: headers,
-                subtitles: []
-            });
-        }
-    }
-
-    // 6️⃣ Nếu chưa có video → bắt iframe để Flutter follow
-    let iframeRegex = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["']/gi;
+    // 2️⃣ Bắt iframe truyền thống, data-src (lazy-load) hoặc data-url
+    let iframeRegex = /<iframe[^>]+(?:src|data-src|data-url)=["']([^"']+)["']/gi;
     while ((m = iframeRegex.exec(html)) !== null) {
-
-        let iframeUrl = normalizeUrl(m[1]);
-
-        // 🔥 ĐÃ SỬA: Bỏ qua các iframe rác (tránh lỗi Flutter bắt nhầm nút Like Facebook hoặc quảng cáo)
-        if (iframeUrl.match(/facebook\.com|youtube\.com|google\.com|recaptcha|twitter|ads|doubleclick/i)) {
-            continue;
-        }
-
-        return JSON.stringify({
-            url: iframeUrl,
-            headers: headers,
-            subtitles: []
-        });
+        candidates.push(normUrl(m[1]));
     }
 
-    // 🔥 ĐÃ SỬA: Bắt trường hợp link player giấu trong thuộc tính data-* của thẻ div (Lazy load custom)
-    let embedRegex = /data-(?:href|url|src|embed)=["'](https?:\/\/[^"']+)["']/gi;
-    while ((m = embedRegex.exec(html)) !== null) {
-        let embedUrl = normalizeUrl(m[1]);
-        if (embedUrl.includes("player") || embedUrl.includes("embed") || embedUrl.includes("animevietsub") || embedUrl.includes("play")) {
+    // 3️⃣ Bắt link cấu hình từ Javascript hoặc data-href của div ẩn
+    let jsRegex = /(?:link_play|iframe_url|iframe|url_play|file|src|data-href|data-embed)\s*(?:=|:)\s*["'](https?:\/\/[^"']+)["']/gi;
+    while ((m = jsRegex.exec(html)) !== null) {
+        candidates.push(normUrl(m[1]));
+    }
+
+    // 🔥 Ưu tiên 1: Trả về link .m3u8 / .mp4 ngay nếu bắt được
+    for (let i = 0; i < candidates.length; i++) {
+        let u = candidates[i];
+        if (u.toLowerCase().includes(".m3u8") || u.toLowerCase().includes(".mp4")) {
             return JSON.stringify({
-                url: embedUrl,
+                url: u,
+                headers: headers,
+                subtitles: []
+            });
+        }
+    }
+
+    // 🔥 Ưu tiên 2: Nếu không có m3u8/mp4, đẩy link Iframe vào Webview ẩn cho Flutter cào tiếp
+    for (let i = 0; i < candidates.length; i++) {
+        let u = candidates[i];
+        
+        // Cực kỳ quan trọng: Lọc sạch Iframe rác
+        if (!u.match(/facebook\.com|youtube\.com|google\.com|recaptcha|twitter|ads|doubleclick|googletagmanager/i)) {
+            return JSON.stringify({
+                url: u,
                 headers: headers,
                 subtitles: []
             });
