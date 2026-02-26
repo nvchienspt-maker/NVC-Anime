@@ -5,7 +5,7 @@
             "id": "animevietsub",
             "name": "AnimeVietsub",
             "version": "1.0.4",
-            "scriptUrl": "https://raw.githubusercontent.com/nvchienspt-maker/NVC-Anime/refs/heads/main/animevietsub.js",
+            "scriptUrl": "https://raw.githubusercontent.com/nvchienspt-maker/NVC-Anime/refs/heads/main/plugins/animevietsub.js",
             "iconUrl": "https://raw.githubusercontent.com/youngbi/repo/main/plugins/ophim.ico"
         },
    
@@ -13,7 +13,7 @@
             "id": "hh3d",
             "name": "HH3D - Hoạt Hình 3D",
             "version": "1.0.1",
-            "scriptUrl": "https://raw.githubusercontent.com/youngbi/repo/main/plugins/hh3d_plugin.js",
+            "scriptUrl": "https://raw.githubusercontent.com/nvchienspt-maker/NVC-Anime/refs/heads/main/plugins/hh3d.js",
             "iconUrl": "https://raw.githubusercontent.com/youngbi/repo/main/plugins/hh3d.ico"
         }
     ]
