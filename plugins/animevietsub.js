@@ -59,46 +59,67 @@ function getUrlDetail(slug) {
 
 // ================= PARSE LIST =================
 
+// ================= PARSE LIST =================
+
 function parseListResponse(html) {
 
     let items = [];
-    let map = {};
+    let found = {};
 
-    let blockRegex = /<a[^>]+href="([^"]*\/phim\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let m;
+    // Bắt block card phim thay vì quét toàn bộ <a>
+    let blockRegex = /<div[^>]*class="[^"]*(?:TPostMv|item|MovieList)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>?/gi;
+    let block;
 
-    while ((m = blockRegex.exec(html)) !== null) {
+    while ((block = blockRegex.exec(html)) !== null) {
 
-        let link = m[1];
-        let content = m[2];
+        let content = block[1];
+
+        let linkMatch = content.match(/<a[^>]+href="([^"]+)"[^>]*>/i);
+        if (!linkMatch) continue;
+
+        let link = linkMatch[1];
+        if (!link.includes("/phim/")) continue;
 
         let id = link.replace(/^(https?:\/\/[^\/]+)?\//i, "");
-        if (map[id]) continue;
+        if (found[id]) continue;
 
+        // Đã sửa: Bắt trực tiếp title/alt từ thẻ img để tránh bị nhầm với thẻ đánh giá
         let titleMatch =
-            content.match(/title="([^"]+)"/i) ||
-            content.match(/alt="([^"]+)"/i);
+            content.match(/<img[^>]+(?:alt|title)="([^"]+)"/i) ||
+            content.match(/<span[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)<\/span>/i);
 
         if (!titleMatch) continue;
 
         let imgMatch =
+            content.match(/<img[^>]+src="([^"]+)"/i) ||
+            content.match(/<img[^>]+data-src="([^"]+)"/i) ||
             content.match(/src="([^"]+)"/i) ||
             content.match(/data-src="([^"]+)"/i);
+
+        // Đã sửa: Tìm thẻ chứa thông tin tập phim mới nhất
+        let epMatch = 
+            content.match(/<span[^>]*class="[^"]*(?:episode|ep-status|status|tray-item)[^"]*"[^>]*>(.*?)<\/span>/i) ||
+            content.match(/<div[^>]*class="[^"]*(?:episode|ep-status|status)[^"]*"[^>]*>(.*?)<\/div>/i);
+        
+        let latestEp = epMatch ? clean(epMatch[1]) : "HD";
 
         items.push({
             id: id,
             title: clean(titleMatch[1]),
             posterUrl: imgMatch ? normalizeUrl(imgMatch[1]) : "",
             backdropUrl: imgMatch ? normalizeUrl(imgMatch[1]) : "",
-            quality: "HD"
+            quality: latestEp // Đã sửa: Gắn số tập vào đây thay cho giá trị cố định
         });
 
-        map[id] = true;
+        found[id] = true;
     }
 
     return JSON.stringify({
         items: items,
-        pagination: { currentPage: 1, totalPages: 50 }
+        pagination: {
+            currentPage: 1,
+            totalPages: 50
+        }
     });
 }
 
